@@ -1,0 +1,1203 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Battlemap + Niebla (guardar solo config + mapa en JSON)</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; background:#0b0f14; color:#e8eef6; }
+    header { padding:10px 14px; border-bottom:1px solid #1b2633; display:flex; gap:12px; align-items:center; flex-wrap:wrap;}
+    header .group { display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+    button, input, select, label {
+      background:#121a24; color:#e8eef6; border:1px solid #263244; border-radius:10px;
+      padding:8px 10px; font-size:14px;
+    }
+    button { cursor:pointer; }
+    button.primary { background:#1a2a3b; border-color:#2c3f56; }
+    button.danger { background:#2b1313; border-color:#6c2e2e; }
+    button:disabled { opacity:.55; cursor:not-allowed; }
+    .pill { padding:6px 10px; border:1px solid #263244; border-radius:999px; background:#0f1620; font-size:13px; }
+    main { display:grid; grid-template-columns: 1fr 340px; gap:0; height: calc(100vh - 58px); }
+    #stageWrap { position:relative; overflow:hidden; }
+    canvas {
+      width:100%; height:100%; display:block; background:#0a0d12;
+      touch-action:none;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select:none;
+    }
+    aside { border-left:1px solid #1b2633; padding:12px; overflow:auto; }
+    h3 { margin:8px 0 10px; font-size:15px; color:#cfe3ff; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0; }
+    .hint { color:#9fb3c8; font-size:12.5px; line-height:1.35; margin:6px 0 10px; }
+    .kv { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+    .kv > div { border:1px solid #223045; border-radius:10px; padding:8px; background:#0f1620; }
+    .kv b { display:block; font-size:12px; color:#9fb3c8; }
+    .kv span { font-size:13px; }
+    .sep { height:1px; background:#1b2633; margin:10px 0; }
+    .small { font-size:12px; color:#9fb3c8; }
+    body.hidePanel main { grid-template-columns: 1fr; }
+    body.hidePanel aside { display:none; }
+    body.isFullscreen main { grid-template-columns: 1fr; }
+    body.isFullscreen aside { display:none; }
+
+    /* input escondido pero “clickable” sin líos de label */
+    #fileState {
+      position: fixed;
+      left: -9999px;
+      width: 1px; height: 1px; opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+
+<body>
+<header id="topBar">
+  <div class="group">
+    <span class="pill">Modo:</span>
+    <button id="btnEdit" class="primary">Edición</button>
+    <button id="btnPlay">Juego</button>
+  </div>
+
+  <div class="group">
+    <label>
+      Cargar mapa
+      <input id="fileMap" type="file" accept="image/*" />
+    </label>
+    <button id="btnFit" title="Ajustar zoom/encuadre">Ajustar</button>
+    <button id="btnSave" class="primary">Guardar</button>
+    <button id="btnLoad">Cargar</button>
+    <input id="fileState" type="file" accept="application/json" />
+  </div>
+
+  <div class="group">
+    <button id="btnFogAll" class="danger" title="Rellena todo de niebla">Niebla total</button>
+    <button id="btnResetExplore" title="Reinicia explorado">Reset explorado</button>
+  </div>
+
+  <div class="group">
+    <button id="btnTogglePanel">Ocultar panel</button>
+    <button id="btnFullscreen" class="primary">Pantalla completa</button>
+  </div>
+
+  <span class="small" id="status"></span>
+</header>
+
+<main>
+  <div id="stageWrap">
+    <canvas id="cv"></canvas>
+  </div>
+
+  <aside id="sidePanel">
+    <h3>Herramientas (Edición)</h3>
+    <div class="row">
+      <select id="tool">
+        <option value="wall">Paredes</option>
+        <option value="start">Zona de inicio</option>
+        <option value="pan">Mover mapa</option>
+      </select>
+      <label>Brush
+        <input id="brush" type="range" min="5" max="120" value="35" />
+      </label>
+    </div>
+    <div class="hint" id="toolHint"></div>
+
+    <div class="sep"></div>
+
+    <h3>Niebla en edición</h3>
+    <div class="row">
+      <label>
+        Mostrar niebla
+        <input id="showFogEdit" type="checkbox" checked />
+      </label>
+    </div>
+    <div class="hint">
+      En <b>Juego</b> la niebla es <b>100% opaca</b> y <b>no se dibujan paredes</b> (pero sí bloquean visión).<br/>
+      Guardado: <b>solo configuración</b> + <b>mapa</b> (en JSON). No se guarda explorado ni niebla pintada.
+    </div>
+
+    <div class="sep"></div>
+
+    <h3>Zoom</h3>
+    <div class="row">
+      <label>Zoom mapa
+        <input id="zoomSlider" type="range" min="10" max="400" value="100" />
+      </label>
+      <button id="btnZoomReset">100%</button>
+    </div>
+
+    <div class="sep"></div>
+
+    <h3>Opciones (Juego)</h3>
+    <div class="row">
+      <label>Radio visión
+        <input id="vision" type="range" min="20" max="300" value="120" />
+      </label>
+      <label>Rayos
+        <input id="rays" type="range" min="64" max="720" value="240" />
+      </label>
+    </div>
+
+    <div class="sep"></div>
+
+    <h3>Guardado (mapa dentro del JSON)</h3>
+    <div class="row">
+      <label>Calidad
+        <input id="quality" type="range" min="40" max="95" step="1" value="80" />
+      </label>
+    </div>
+
+    <div class="sep"></div>
+
+    <h3>Movimiento teclado</h3>
+    <div class="row">
+      <label>Paso (px)
+        <input id="step" type="range" min="1" max="80" value="20" />
+      </label>
+    </div>
+
+    <div class="sep"></div>
+
+    <h3>Info</h3>
+    <div class="kv">
+      <div><b>Paredes</b><span id="wallCount">0</span></div>
+      <div><b>Mapa</b><span id="mapInfo">—</span></div>
+      <div><b>Token</b><span id="tokenInfo">—</span></div>
+      <div><b>Zoom</b><span id="zoomInfo">—</span></div>
+    </div>
+  </aside>
+</main>
+<script>
+(() => {
+  const state = {
+    mode: "edit",
+    tool: "wall",
+
+    img: null,
+    imgW: 0,
+    imgH: 0,
+    originalMapFile: null,
+
+    panX: 0,
+    panY: 0,
+    zoom: 1,
+
+    walls: [],
+    wallDraft: null,
+
+    // start zone
+    start: { x: 200, y: 200, r: 35 },
+
+    // fog + explored + composite cache
+    fogCanvas: document.createElement("canvas"),
+    fogCtx: null,
+
+    exploredCanvas: document.createElement("canvas"),
+    exploredCtx: null,
+
+    fogCompositeCanvas: document.createElement("canvas"),
+    fogCompositeCtx: null,
+    fogCompositeDirty: true,
+
+    // token & vision
+    token: { x: 200, y: 200 },
+    visionRadius: 120,
+    rays: 240,
+
+    // pointer
+    isDown: false,
+    isPanning: false,
+    draggingToken: false,
+    tokenPickRadius: 28,
+    lastMouse: { x: 0, y: 0 },
+
+    panBlocked: false,
+    showFogEdit: true,
+
+    pinch: { active:false, startDist:0, startZoom:1 },
+
+    // caches
+    wallsPath: null,
+    wallsDirty: true,
+    // wall bbox cache: {ax,ay,bx,by, minX,maxX,minY,maxY}
+    wallsWithBBox: [],
+    // prefilter for vision
+    visibleWallIdx: [],
+    lastWallFilter: { x: NaN, y: NaN, r: NaN },
+
+    // render scheduling
+    _raf: 0,
+    dirty: { scene:true, ui:true, fog:true },
+
+    // pointer rect cache
+    _stageRect: null,
+    _dpr: 1,
+
+    // reveal throttle
+    _lastRevealT: 0,
+    _lastRevealX: NaN,
+    _lastRevealY: NaN,
+  };
+
+  const cv = document.getElementById("cv");
+  const ctx = cv.getContext("2d");
+
+  const topBar = document.getElementById("topBar");
+  const sidePanel = document.getElementById("sidePanel");
+
+  const btnEdit = document.getElementById("btnEdit");
+  const btnPlay = document.getElementById("btnPlay");
+
+  const fileMap = document.getElementById("fileMap");
+  const btnFit = document.getElementById("btnFit");
+  const btnSave = document.getElementById("btnSave");
+  const btnLoad = document.getElementById("btnLoad");
+  const fileState = document.getElementById("fileState");
+
+  const btnFogAll = document.getElementById("btnFogAll");
+  const btnResetExplore = document.getElementById("btnResetExplore");
+
+  const btnTogglePanel = document.getElementById("btnTogglePanel");
+  const btnFullscreen = document.getElementById("btnFullscreen");
+
+  const toolSel = document.getElementById("tool");
+  const brush = document.getElementById("brush");
+  const showFogEdit = document.getElementById("showFogEdit");
+
+  const zoomSlider = document.getElementById("zoomSlider");
+  const btnZoomReset = document.getElementById("btnZoomReset");
+
+  const vision = document.getElementById("vision");
+  const rays = document.getElementById("rays");
+  const stepSlider = document.getElementById("step");
+  const qualitySlider = document.getElementById("quality");
+
+  const toolHint = document.getElementById("toolHint");
+  const statusEl = document.getElementById("status");
+
+  const wallCountEl = document.getElementById("wallCount");
+  const mapInfoEl = document.getElementById("mapInfo");
+  const tokenInfoEl = document.getElementById("tokenInfo");
+  const zoomInfoEl = document.getElementById("zoomInfo");
+
+  function setStatus(msg){ statusEl.textContent = msg || ""; }
+  function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+  // ---------------------------
+  // Render scheduling (RAF)
+  // ---------------------------
+  function requestRender(scene=true, ui=false, fog=false){
+    if (scene) state.dirty.scene = true;
+    if (ui) state.dirty.ui = true;
+    if (fog) state.dirty.fog = true;
+    if (state._raf) return;
+    state._raf = requestAnimationFrame(() => {
+      state._raf = 0;
+      renderFrame();
+    });
+  }
+
+  // ---------------------------
+  // Canvas sizing + cached rect
+  // ---------------------------
+  function resizeCanvasToDisplaySize() {
+    const rect = cv.getBoundingClientRect();
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+
+    state._stageRect = rect;
+    state._dpr = dpr;
+
+    const w = Math.round(rect.width * dpr);
+    const h = Math.round(rect.height * dpr);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  }
+
+  function pointerPos(ev){
+    // usa rect/dpr cacheados
+    const rect = state._stageRect || cv.getBoundingClientRect();
+    const dpr  = state._dpr || Math.max(1, window.devicePixelRatio || 1);
+    return { x: (ev.clientX - rect.left) * dpr, y: (ev.clientY - rect.top) * dpr };
+  }
+
+  function screenToWorld(x,y) {
+    return { x: (x - state.panX) / state.zoom, y: (y - state.panY) / state.zoom };
+  }
+
+  function clampPan(){
+    if (!state.img) return;
+    resizeCanvasToDisplaySize();
+    const cw = cv.width, ch = cv.height;
+    const mapW = state.imgW * state.zoom;
+    const mapH = state.imgH * state.zoom;
+    if (mapW <= cw) state.panX = (cw - mapW) / 2;
+    else state.panX = clamp(state.panX, cw - mapW, 0);
+    if (mapH <= ch) state.panY = (ch - mapH) / 2;
+    else state.panY = clamp(state.panY, ch - mapH, 0);
+  }
+
+  function canvasCenterScreen(){
+    resizeCanvasToDisplaySize();
+    return { x: cv.width / 2, y: cv.height / 2 };
+  }
+
+  function ensureTokenInView(margin = 100){
+    if (!state.img) return;
+    resizeCanvasToDisplaySize();
+    const sx = state.token.x * state.zoom + state.panX;
+    const sy = state.token.y * state.zoom + state.panY;
+    let dx = 0, dy = 0;
+    if (sx < margin) dx = margin - sx; else if (sx > cv.width - margin) dx = (cv.width - margin) - sx;
+    if (sy < margin) dy = margin - sy; else if (sy > cv.height - margin) dy = (cv.height - margin) - sy;
+    if (dx || dy) { state.panX += dx; state.panY += dy; clampPan(); }
+  }
+
+  // ---------------------------
+  // Fog / explored canvases + composite cache
+  // ---------------------------
+  function ensureMaskCanvases(){
+    if (!state.imgW || !state.imgH) return;
+    for (const c of [state.fogCanvas, state.exploredCanvas, state.fogCompositeCanvas]) {
+      if (c.width !== state.imgW || c.height !== state.imgH) { c.width = state.imgW; c.height = state.imgH; }
+    }
+    state.fogCtx = state.fogCanvas.getContext("2d");
+    state.exploredCtx = state.exploredCanvas.getContext("2d");
+    state.fogCompositeCtx = state.fogCompositeCanvas.getContext("2d");
+  }
+
+  function fillFogAll(){
+    ensureMaskCanvases();
+    state.fogCtx.save();
+    state.fogCtx.globalCompositeOperation = "source-over";
+    state.fogCtx.fillStyle = "rgba(0,0,0,1)";
+    state.fogCtx.fillRect(0,0,state.imgW,state.imgH);
+    state.fogCtx.restore();
+    state.fogCompositeDirty = true;
+    requestRender(true,false,true);
+  }
+
+  function resetExplored(){
+    ensureMaskCanvases();
+    state.exploredCtx.clearRect(0,0,state.imgW,state.imgH);
+    state.fogCompositeDirty = true;
+    requestRender(true,false,true);
+  }
+
+  function rebuildFogCompositeIfNeeded(){
+    if (!state.fogCompositeDirty) return;
+    ensureMaskCanvases();
+    const tctx = state.fogCompositeCtx;
+
+    tctx.save();
+    tctx.globalCompositeOperation = "source-over";
+    tctx.clearRect(0,0,state.imgW,state.imgH);
+    tctx.drawImage(state.fogCanvas, 0, 0);
+
+    tctx.globalCompositeOperation = "destination-out";
+    tctx.drawImage(state.exploredCanvas, 0, 0);
+    tctx.restore();
+
+    state.fogCompositeDirty = false;
+  }
+
+  // ---------------------------
+  // Walls caching (Path2D + bbox)
+  // ---------------------------
+  function rebuildWallsCacheIfNeeded(){
+    if (!state.wallsDirty) return;
+
+    // Path2D
+    const p = new Path2D();
+    const wbb = [];
+    for (const w of state.walls){
+      p.moveTo(w.ax, w.ay); p.lineTo(w.bx, w.by);
+      const minX = Math.min(w.ax, w.bx), maxX = Math.max(w.ax, w.bx);
+      const minY = Math.min(w.ay, w.by), maxY = Math.max(w.ay, w.by);
+      wbb.push({ ...w, minX, maxX, minY, maxY });
+    }
+    state.wallsPath = p;
+    state.wallsWithBBox = wbb;
+    state.wallsDirty = false;
+
+    // fuerza refiltro en próxima visión
+    state.lastWallFilter.x = NaN;
+  }
+
+  // Prefiltro barato: solo paredes cuyo bbox toca el cuadrado del radio (mucho menos que todas)
+  function updateVisibleWallFilter(origin, radius){
+    const ox = origin.x, oy = origin.y;
+    if (state.lastWallFilter.x === ox && state.lastWallFilter.y === oy && state.lastWallFilter.r === radius) return;
+
+    rebuildWallsCacheIfNeeded();
+
+    const minX = ox - radius, maxX = ox + radius;
+    const minY = oy - radius, maxY = oy + radius;
+
+    const idx = [];
+    const arr = state.wallsWithBBox;
+    for (let i=0; i<arr.length; i++){
+      const w = arr[i];
+      // bbox intersects square
+      if (w.maxX < minX || w.minX > maxX || w.maxY < minY || w.minY > maxY) continue;
+      idx.push(i);
+    }
+    state.visibleWallIdx = idx;
+    state.lastWallFilter.x = ox;
+    state.lastWallFilter.y = oy;
+    state.lastWallFilter.r = radius;
+  }
+
+  // ---------------------------
+  // Vision raycasting
+  // ---------------------------
+  function raySegmentIntersect(px,py, rx,ry, ax,ay, bx,by) {
+    const sdx = bx-ax, sdy = by-ay;
+    const denom = (rx * sdy - ry * sdx);
+    if (Math.abs(denom) < 1e-9) return null;
+    const qpx = ax - px, qpy = ay - py;
+    const t = (qpx * sdy - qpy * sdx) / denom;
+    const u = (qpx * ry - qpy * rx) / denom;
+    if (t >= 0 && u >= 0 && u <= 1) return { t, x: px + t*rx, y: py + t*ry };
+    return null;
+  }
+
+  function computeVisiblePolygon(origin, radius, raysCount){
+    // prefiltra walls para este origen/radio
+    updateVisibleWallFilter(origin, radius);
+
+    const pts = [];
+    const ox = origin.x, oy = origin.y;
+
+    // micro-opt: locals
+    const wbb = state.wallsWithBBox;
+    const candidates = state.visibleWallIdx;
+
+    for (let i=0; i<raysCount; i++){
+      const ang = (i / raysCount) * Math.PI * 2;
+      const dx = Math.cos(ang), dy = Math.sin(ang);
+      let bestT = radius, bestX = ox + dx*radius, bestY = oy + dy*radius;
+
+      for (let j=0; j<candidates.length; j++){
+        const w = wbb[candidates[j]];
+        const hit = raySegmentIntersect(ox,oy, dx,dy, w.ax,w.ay,w.bx,w.by);
+        if (hit && hit.t < bestT && hit.t <= radius) {
+          bestT = hit.t; bestX = hit.x; bestY = hit.y;
+        }
+      }
+      pts.push({x:bestX, y:bestY});
+    }
+    return pts;
+  }
+
+  function revealAtPoint(pt, raysCountOverride=null){
+    ensureMaskCanvases();
+    const raysCount = raysCountOverride ?? state.rays;
+    const vis = computeVisiblePolygon(pt, state.visionRadius, raysCount);
+    const ex = state.exploredCtx;
+    ex.save();
+    ex.globalCompositeOperation = "source-over";
+    ex.fillStyle = "white";
+    ex.beginPath();
+    ex.moveTo(vis[0].x, vis[0].y);
+    for (let i=1;i<vis.length;i++) ex.lineTo(vis[i].x, vis[i].y);
+    ex.closePath();
+    ex.fill();
+    ex.restore();
+
+    state.fogCompositeDirty = true;
+  }
+
+  function revealFromTokenFull(){
+    revealAtPoint({x:state.token.x, y:state.token.y}, state.rays);
+    requestRender(true,false,true);
+  }
+
+  // Throttle + skip tiny movement + LOD rays while dragging
+  function revealFromTokenThrottled(isDragging){
+    const now = performance.now();
+    const x = state.token.x, y = state.token.y;
+
+    if (Math.hypot(x - state._lastRevealX, y - state._lastRevealY) < 2) return;
+
+    // ~30fps
+    if (now - state._lastRevealT < 33) return;
+
+    state._lastRevealT = now;
+    state._lastRevealX = x; state._lastRevealY = y;
+
+    const lodRays = isDragging ? Math.min(state.rays, 120) : state.rays;
+    revealAtPoint({x, y}, lodRays);
+    requestRender(true,false,true);
+  }
+
+  // ---------------------------
+  // UI / mode
+  // ---------------------------
+  function updateHints(){
+    const isEdit = state.mode === "edit";
+    toolSel.disabled = !isEdit;
+    brush.disabled = !isEdit;
+    const hints = {
+      wall: "Paredes: click A, click B. Backspace borra la última.",
+      start: "Zona de inicio: click para mover el centro. El radio lo marca Brush.",
+      pan: "Mover mapa: arrastra para pan. PC: Shift+rueda. iPad: pinch.",
+    };
+    toolHint.innerHTML = isEdit ? hints[state.tool] : "Juego: arrastra token (ratón/dedo cerca) para revelar. Si no, arrastras para mover cámara.";
+  }
+
+  function setMode(mode){
+    state.mode = mode;
+    btnEdit.classList.toggle("primary", mode === "edit");
+    btnPlay.classList.toggle("primary", mode === "play");
+
+    if (mode === "play") {
+      state.token.x = state.start.x;
+      state.token.y = state.start.y;
+      fillFogAll();
+      resetExplored();
+      revealFromTokenFull();
+      ensureTokenInView(120);
+    } else {
+      state.isDown = false; state.isPanning = false; state.draggingToken = false; state.panBlocked = false;
+    }
+    updateHints();
+    requestRender(true,true,true);
+  }
+
+  function syncZoomUI(){
+    zoomSlider.value = String(Math.round(state.zoom * 100));
+    zoomInfoEl.textContent = `${Math.round(state.zoom*100)}%`;
+  }
+
+  function setZoomPercent(percent){
+    if (!state.img) return;
+    const anchor = canvasCenterScreen();
+    const newZoom = clamp(percent / 100, 0.1, 8);
+    const before = screenToWorld(anchor.x, anchor.y);
+    state.zoom = newZoom;
+    const after = screenToWorld(anchor.x, anchor.y);
+    state.panX += (after.x - before.x) * state.zoom;
+    state.panY += (after.y - before.y) * state.zoom;
+    syncZoomUI();
+    clampPan();
+    requestRender(true,true,false);
+  }
+
+  function fitToScreen(){
+    if (!state.img) return;
+    resizeCanvasToDisplaySize();
+    const w = cv.width, h = cv.height;
+    const zx = w / state.imgW;
+    const zy = h / state.imgH;
+    state.zoom = Math.min(zx, zy) * 0.95;
+    state.panX = (w - state.imgW * state.zoom) / 2;
+    state.panY = (h - state.imgH * state.zoom) / 2;
+    syncZoomUI();
+    clampPan();
+    requestRender(true,true,false);
+  }
+
+  // ---------------------------
+  // Rendering
+  // ---------------------------
+  function drawWallsFast(){
+    rebuildWallsCacheIfNeeded();
+    ctx.save();
+    ctx.lineWidth = 3 / state.zoom;
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    if (state.wallsPath) ctx.stroke(state.wallsPath);
+
+    if (state.tool==="wall" && state.wallDraft) {
+      ctx.fillStyle = "rgba(255,255,0,0.9)";
+      ctx.beginPath();
+      ctx.arc(state.wallDraft.ax, state.wallDraft.ay, 5/state.zoom, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawStartAndToken(){
+    // start
+    ctx.save();
+    ctx.lineWidth = 2 / state.zoom;
+    ctx.strokeStyle = "rgba(0,200,255,0.9)";
+    ctx.setLineDash([8/state.zoom, 6/state.zoom]);
+    ctx.beginPath();
+    ctx.arc(state.start.x, state.start.y, state.start.r, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+
+    // token
+    ctx.save();
+    ctx.fillStyle = "rgba(255,120,0,0.95)";
+    ctx.strokeStyle = "rgba(0,0,0,0.6)";
+    ctx.lineWidth = 3/state.zoom;
+    ctx.beginPath();
+    ctx.arc(state.token.x, state.token.y, 10/state.zoom, 0, Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function updateUI(){
+    wallCountEl.textContent = String(state.walls.length);
+    mapInfoEl.textContent = state.img ? `${state.imgW}×${state.imgH}` : "—";
+    tokenInfoEl.textContent = state.img ? `(${Math.round(state.token.x)}, ${Math.round(state.token.y)})` : "—";
+    zoomInfoEl.textContent = `${Math.round(state.zoom*100)}%`;
+  }
+
+  function renderFrame(){
+    resizeCanvasToDisplaySize();
+
+    ctx.clearRect(0,0,cv.width,cv.height);
+    ctx.fillStyle = "#070a0f";
+    ctx.fillRect(0,0,cv.width,cv.height);
+
+    if (!state.img) {
+      ctx.fillStyle = "#9fb3c8";
+      ctx.font = "16px system-ui";
+      ctx.fillText("Carga una imagen de mapa para empezar.", 18, 28);
+      if (state.dirty.ui) updateUI();
+      state.dirty.scene = state.dirty.ui = state.dirty.fog = false;
+      return;
+    }
+
+    ctx.save();
+    ctx.translate(state.panX, state.panY);
+    ctx.scale(state.zoom, state.zoom);
+
+    ctx.drawImage(state.img, 0, 0, state.imgW, state.imgH);
+
+    const shouldDrawFog = (state.mode === "play") || (state.mode === "edit" && state.showFogEdit);
+    if (shouldDrawFog && state.fogCtx) {
+      rebuildFogCompositeIfNeeded();
+      ctx.save();
+      ctx.globalAlpha = (state.mode === "play") ? 1.0 : 0.9;
+      ctx.drawImage(state.fogCompositeCanvas, 0, 0);
+      ctx.restore();
+    }
+
+    if (state.mode === "edit") drawWallsFast();
+
+    drawStartAndToken();
+    ctx.restore();
+
+    if (state.dirty.ui) updateUI();
+    state.dirty.scene = state.dirty.ui = state.dirty.fog = false;
+  }
+
+  // ---------------------------
+  // Save / load (SIN cambiar tu lógica)
+  // ---------------------------
+  function downloadText(filename, text){
+    const blob = new Blob([text], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function blobToDataURL(blob){
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = reject;
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  function canvasToBlobSafe(canvas, type, quality){
+    return new Promise((resolve) => {
+      try { canvas.toBlob((b) => resolve(b), type, quality); }
+      catch { resolve(null); }
+    });
+  }
+
+  function dataURLToImage(dataURL){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = dataURL;
+    });
+  }
+
+  function fileToImage(fileOrBlob) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(fileOrBlob);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+      img.src = url;
+    });
+  }
+
+  async function imageFileToDataURL_SameSize(file, quality){
+    const img = await fileToImage(file);
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    c.getContext("2d").drawImage(img, 0, 0, w, h);
+    const q = clamp(quality, 0.4, 0.95);
+
+    const blobWebp = await canvasToBlobSafe(c, "image/webp", q);
+    if (blobWebp) return await blobToDataURL(blobWebp);
+
+    const blobJpg = await canvasToBlobSafe(c, "image/jpeg", q);
+    if (blobJpg) return await blobToDataURL(blobJpg);
+
+    return await blobToDataURL(await canvasToBlobSafe(c, "image/png", 0.92));
+  }
+
+  async function currentImageToDataURL_SameSize(quality){
+    const w = state.imgW, h = state.imgH;
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    c.getContext("2d").drawImage(state.img, 0, 0, w, h);
+    const q = clamp(quality, 0.4, 0.95);
+
+    const blobWebp = await canvasToBlobSafe(c, "image/webp", q);
+    if (blobWebp) return await blobToDataURL(blobWebp);
+
+    const blobJpg = await canvasToBlobSafe(c, "image/jpeg", q);
+    if (blobJpg) return await blobToDataURL(blobJpg);
+
+    return await blobToDataURL(await canvasToBlobSafe(c, "image/png", 0.92));
+  }
+
+  async function saveState(){
+    if (!state.img) return setStatus("No hay mapa cargado.");
+    const quality = Number(qualitySlider.value) / 100;
+
+    let mapDataURL;
+    try {
+      if (state.originalMapFile) mapDataURL = await imageFileToDataURL_SameSize(state.originalMapFile, quality);
+      else mapDataURL = await currentImageToDataURL_SameSize(quality);
+    } catch (e) {
+      console.error(e);
+      return setStatus("Error guardando el mapa en el JSON.");
+    }
+
+    const payload = {
+      version: 9,
+      createdAt: new Date().toISOString(),
+      map: { dataURL: mapDataURL },
+      walls: state.walls,
+      start: state.start,
+      vision: { radius: state.visionRadius, rays: state.rays },
+      view: { zoom: state.zoom, panX: state.panX, panY: state.panY, showFogEdit: !!state.showFogEdit, step: Number(stepSlider.value) }
+    };
+
+    downloadText("battlemap_state.json", JSON.stringify(payload));
+    setStatus("Guardado OK.");
+  }
+
+  async function loadStateFromFile(file){
+    const payload = JSON.parse(await file.text());
+    if (!payload?.map?.dataURL) throw new Error("El JSON no contiene map.dataURL");
+    const img = await dataURLToImage(payload.map.dataURL);
+    state.img = img; state.imgW = img.naturalWidth; state.imgH = img.naturalHeight;
+    state.originalMapFile = null;
+
+    ensureMaskCanvases();
+    fillFogAll();
+    resetExplored();
+
+    state.walls = Array.isArray(payload.walls) ? payload.walls : [];
+    state.wallsDirty = true;
+
+    state.start = payload.start || { x: state.imgW/2, y: state.imgH/2, r: 35 };
+
+    if (payload.vision) {
+      state.visionRadius = Number(payload.vision.radius ?? state.visionRadius);
+      state.rays = Number(payload.vision.rays ?? state.rays);
+    }
+    vision.value = String(state.visionRadius);
+    rays.value = String(state.rays);
+
+    state.showFogEdit = !!payload.view?.showFogEdit;
+    showFogEdit.checked = state.showFogEdit;
+
+    if (typeof payload.view?.step === "number") stepSlider.value = String(payload.view.step);
+
+    const hasCam = typeof payload.view?.zoom === "number" && typeof payload.view?.panX === "number" && typeof payload.view?.panY === "number";
+    if (hasCam) {
+      state.zoom = payload.view.zoom;
+      state.panX = payload.view.panX;
+      state.panY = payload.view.panY;
+      syncZoomUI();
+      clampPan();
+    } else {
+      fitToScreen();
+    }
+
+    state.token.x = state.start.x;
+    state.token.y = state.start.y;
+    revealFromTokenFull();
+    ensureTokenInView(120);
+
+    setMode("edit");
+    requestRender(true,true,true);
+    setStatus("Cargado OK.");
+  }
+
+  // FIX: evitar doble picker
+  let loadingPickInProgress = false;
+
+  btnLoad.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (loadingPickInProgress) return;
+    loadingPickInProgress = true;
+    try { fileState.click(); } catch {}
+    setTimeout(() => { loadingPickInProgress = false; }, 600);
+  });
+
+  fileState.addEventListener("click", (e) => e.stopPropagation());
+
+  fileState.addEventListener("change", async (e) => {
+    try {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      if (loadingPickInProgress === false) loadingPickInProgress = true;
+      await loadStateFromFile(f);
+    } catch (err) {
+      console.error(err);
+      setStatus("Error al cargar JSON.");
+    } finally {
+      fileState.value = "";
+      loadingPickInProgress = false;
+    }
+  });
+
+  // ---------------------------
+  // Load map
+  // ---------------------------
+  fileMap.addEventListener("change", async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+
+    state.originalMapFile = f;
+    try {
+      const img = await fileToImage(f);
+      state.img = img; state.imgW = img.naturalWidth; state.imgH = img.naturalHeight;
+
+      state.walls = [];
+      state.wallDraft = null;
+      state.wallsDirty = true;
+
+      ensureMaskCanvases();
+      fillFogAll();
+      resetExplored();
+
+      state.start.x = state.imgW/2;
+      state.start.y = state.imgH/2;
+      state.start.r = Number(brush.value);
+
+      state.token.x = state.start.x;
+      state.token.y = state.start.y;
+
+      fitToScreen();
+      setStatus(`Mapa cargado: ${f.name}`);
+      requestRender(true,true,true);
+    } catch (err) {
+      console.error(err);
+      setStatus("Error cargando la imagen.");
+    }
+  });
+
+  // ---------------------------
+  // UI controls
+  // ---------------------------
+  btnEdit.addEventListener("click", () => setMode("edit"));
+  btnPlay.addEventListener("click", () => setMode("play"));
+
+  toolSel.addEventListener("change", () => {
+    state.tool = toolSel.value;
+    updateHints();
+    requestRender(true,false,false);
+  });
+
+  brush.addEventListener("input", () => {
+    state.start.r = Number(brush.value);
+    requestRender(true,false,false);
+  });
+
+  showFogEdit.addEventListener("change", () => {
+    state.showFogEdit = !!showFogEdit.checked;
+    requestRender(true,false,false);
+  });
+
+  zoomSlider.addEventListener("input", () => setZoomPercent(Number(zoomSlider.value)));
+  btnZoomReset.addEventListener("click", () => setZoomPercent(100));
+  btnFit.addEventListener("click", fitToScreen);
+
+  vision.addEventListener("input", () => {
+    state.visionRadius = Number(vision.value);
+    if (state.mode==="play") revealFromTokenFull();
+    requestRender(true,true,true);
+  });
+
+  rays.addEventListener("input", () => {
+    state.rays = Number(rays.value);
+    if (state.mode==="play") revealFromTokenFull();
+    requestRender(true,true,true);
+  });
+
+  btnFogAll.addEventListener("click", () => { fillFogAll(); setStatus("Niebla total aplicada."); });
+  btnResetExplore.addEventListener("click", () => { resetExplored(); setStatus("Explorado reiniciado."); });
+  btnSave.addEventListener("click", saveState);
+
+  function setPanelHidden(hidden){
+    document.body.classList.toggle("hidePanel", hidden);
+    btnTogglePanel.textContent = hidden ? "Mostrar panel" : "Ocultar panel";
+    clampPan();
+    requestRender(true,true,false);
+  }
+  btnTogglePanel.addEventListener("click", () => setPanelHidden(!document.body.classList.contains("hidePanel")));
+
+  async function toggleFullscreen(){
+    try {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+      else if (document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
+      else document.body.classList.toggle("isFullscreen");
+    } catch {
+      document.body.classList.toggle("isFullscreen");
+    } finally {
+      const isFs = !!document.fullscreenElement || document.body.classList.contains("isFullscreen");
+      btnFullscreen.textContent = isFs ? "Salir pantalla completa" : "Pantalla completa";
+      clampPan();
+      requestRender(true,true,false);
+    }
+  }
+  btnFullscreen.addEventListener("click", toggleFullscreen);
+
+  document.addEventListener("fullscreenchange", () => {
+    const isFs = !!document.fullscreenElement;
+    document.body.classList.toggle("isFullscreen", isFs);
+    btnFullscreen.textContent = isFs ? "Salir pantalla completa" : "Pantalla completa";
+    clampPan();
+    requestRender(true,true,false);
+  });
+
+  // ---------------------------
+  // Pan blocking from UI
+  // ---------------------------
+  function isUIEventTarget(t){
+    if (!t) return false;
+    return (topBar.contains(t) || sidePanel.contains(t) || !!t.closest?.("button, input, select, label, textarea, a"));
+  }
+
+  window.addEventListener("pointerdown", (e) => {
+    state.panBlocked = isUIEventTarget(e.target);
+    if (state.panBlocked) { state.isPanning = false; state.draggingToken = false; }
+  }, { capture:true });
+
+  window.addEventListener("pointerup", () => {
+    state.panBlocked = false;
+    state.isPanning = false;
+    state.isDown = false;
+    state.draggingToken = false;
+    state.pinch.active = false;
+  }, { capture:true });
+
+  // ---------------------------
+  // Input interactions
+  // ---------------------------
+  cv.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // Zoom: Shift + wheel (PC)
+  cv.addEventListener("wheel", (e) => {
+    if (!state.img) return;
+    if (e.shiftKey) {
+      e.preventDefault();
+      const delta = -Math.sign(e.deltaY);
+      const factor = delta > 0 ? 1.08 : 1/1.08;
+      setZoomPercent(clamp(state.zoom * factor, 0.1, 8) * 100);
+    }
+  }, { passive:false });
+
+  // Pinch (iPad)
+  cv.addEventListener("touchstart", (e) => {
+    if (!state.img) return;
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      const a = e.touches[0], b = e.touches[1];
+      state.pinch.active = true;
+      state.pinch.startDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      state.pinch.startZoom = state.zoom;
+    }
+  }, { passive:false });
+
+  cv.addEventListener("touchmove", (e) => {
+    if (!state.img) return;
+    if (state.pinch.active && e.touches.length === 2) {
+      e.preventDefault();
+      const a = e.touches[0], b = e.touches[1];
+      const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      const ratio = dist / Math.max(1, state.pinch.startDist);
+      setZoomPercent(clamp(state.pinch.startZoom * ratio, 0.1, 8) * 100);
+    }
+  }, { passive:false });
+
+  cv.addEventListener("touchend", () => { state.pinch.active = false; });
+
+  // Keyboard
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Backspace" && state.mode==="edit" && state.tool==="wall") {
+      e.preventDefault();
+      if (state.wallDraft) {
+        state.wallDraft = null;
+        requestRender(true,true,false);
+        return;
+      }
+      state.walls.pop();
+      state.wallsDirty = true;
+      requestRender(true,true,false);
+      return;
+    }
+
+    const arrowKeys = ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"];
+    if (state.mode==="play" && state.img && arrowKeys.includes(e.key)) {
+      e.preventDefault();
+      const base = Number(stepSlider.value);
+      const mult = (e.shiftKey ? 3 : 1) * (e.altKey ? 0.25 : 1);
+      const step = base * mult;
+
+      if (e.key==="ArrowUp") state.token.y -= step;
+      if (e.key==="ArrowDown") state.token.y += step;
+      if (e.key==="ArrowLeft") state.token.x -= step;
+      if (e.key==="ArrowRight") state.token.x += step;
+
+      state.token.x = clamp(state.token.x, 0, state.imgW);
+      state.token.y = clamp(state.token.y, 0, state.imgH);
+
+      ensureTokenInView(120);
+      revealFromTokenFull();
+      requestRender(true,true,true);
+    }
+  });
+
+  // Pointer / drag token + pan
+  cv.addEventListener("pointerdown", (e) => {
+    if (!state.img) return;
+    if (state.panBlocked) return;
+    if (state.pinch.active) return;
+
+    const p = pointerPos(e);
+    state.isDown = true;
+    state.lastMouse = p;
+
+    const isRight = (e.button === 2);
+
+    if (state.mode === "play") {
+      const w = screenToWorld(p.x, p.y);
+      const dist = Math.hypot(w.x - state.token.x, w.y - state.token.y);
+
+      const canGrabWithMouse = (e.pointerType === "mouse" && e.button === 0);
+      const canGrabWithTouch = (e.pointerType === "touch");
+
+      if ((canGrabWithMouse || canGrabWithTouch) && dist <= state.tokenPickRadius) {
+        state.draggingToken = true;
+        state.isPanning = false;
+        try { cv.setPointerCapture(e.pointerId); } catch {}
+      } else {
+        state.isPanning = true;
+        state.draggingToken = false;
+        try { cv.setPointerCapture(e.pointerId); } catch {}
+      }
+      return;
+    }
+
+    if (state.tool==="pan" || isRight) {
+      state.isPanning = true;
+      try { cv.setPointerCapture(e.pointerId); } catch {}
+      return;
+    }
+
+    const w = screenToWorld(p.x,p.y);
+    if (state.tool==="wall") {
+      if (!state.wallDraft) state.wallDraft = { ax: w.x, ay: w.y };
+      else {
+        state.walls.push({ ax: state.wallDraft.ax, ay: state.wallDraft.ay, bx: w.x, by: w.y });
+        state.wallDraft = null;
+        state.wallsDirty = true;
+      }
+      requestRender(true,true,false);
+    } else if (state.tool==="start") {
+      state.start.x = w.x;
+      state.start.y = w.y;
+      state.start.r = Number(brush.value);
+      state.token.x = state.start.x;
+      state.token.y = state.start.y;
+      resetExplored();
+      revealFromTokenFull();
+      requestRender(true,true,true);
+    }
+  });
+
+  cv.addEventListener("pointermove", (e) => {
+    if (!state.img) return;
+    if (state.panBlocked) return;
+    if (state.pinch.active) return;
+
+    const p = pointerPos(e);
+
+    if (state.draggingToken) {
+      const w = screenToWorld(p.x, p.y);
+      state.token.x = clamp(w.x, 0, state.imgW);
+      state.token.y = clamp(w.y, 0, state.imgH);
+      ensureTokenInView(120);
+      revealFromTokenThrottled(true); // LOD + throttle
+      requestRender(true,true,true);
+      return;
+    }
+
+    if (state.isPanning) {
+      state.panX += (p.x - state.lastMouse.x);
+      state.panY += (p.y - state.lastMouse.y);
+      state.lastMouse = p;
+      clampPan();
+      requestRender(true,false,false);
+    }
+  });
+
+  function endPointer(){
+    // al soltar, si venías arrastrando token, recalcula visión a full
+    const wasDragging = state.draggingToken;
+    state.isDown = false;
+    state.isPanning = false;
+    state.draggingToken = false;
+
+    if (state.mode==="play" && wasDragging) {
+      revealFromTokenFull();
+      requestRender(true,true,true);
+    }
+  }
+  cv.addEventListener("pointerup", endPointer);
+  cv.addEventListener("pointercancel", endPointer);
+  cv.addEventListener("pointerleave", endPointer);
+
+  // Resize observer
+  const ro = new ResizeObserver(() => {
+    clampPan();
+    requestRender(true,false,false);
+  });
+  ro.observe(document.getElementById("stageWrap"));
+
+  // Init UI
+  toolSel.value = state.tool;
+  showFogEdit.checked = true;
+  state.showFogEdit = true;
+  vision.value = String(state.visionRadius);
+  rays.value = String(state.rays);
+  updateHints();
+
+  setMode("edit");
+  requestRender(true,true,true);
+})();
+</script>
+</body>
+</html>
