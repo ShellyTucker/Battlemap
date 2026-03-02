@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Battlemap Editor (Suelo / Puertas / Tokens)</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; background:#0b0f14; color:#e8eef6; }
+    header {
+      position: sticky; top: 0; z-index: 5;
+      background: rgba(10,14,20,.92);
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      backdrop-filter: blur(10px);
+      padding: 10px 12px;
+    }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .group { display:flex; gap:8px; align-items:center; padding: 6px 8px; border:1px solid rgba(255,255,255,.10); border-radius: 12px; background: rgba(255,255,255,.03); }
+    .btn, select, input[type="text"] {
+      background: rgba(255,255,255,.06);
+      color: #e8eef6;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 14px;
+      outline: none;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    .btn { cursor: pointer; user-select:none; }
+    .btn.active { border-color: rgba(120,200,255,.65); box-shadow: 0 0 0 2px rgba(120,200,255,.18) inset; }
+    .swatches { display:flex; gap:6px; align-items:center; }
+    .swatch {
+      width: 28px; height: 28px; border-radius: 8px;
+      border: 1px solid rgba(255,255,255,.16);
+      overflow:hidden;
+      background:#111;
+    }
+    .swatch canvas { width:100%; height:100%; display:block; image-rendering: pixelated; }
+    main { display:flex; height: calc(100vh - 70px); }
+    #wrap { flex: 1; position: relative; }
+    #c {
+      width: 100%; height: 100%;
+      display:block;
+      touch-action: none; /* crucial para iPad: permite pintar/arrastrar sin scroll */
+      background: #070a0e;
+    }
+    .hint {
+      position:absolute; right:12px; bottom:12px;
+      padding: 10px 12px; border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.45);
+      font-size: 12px; line-height: 1.25;
+      max-width: 320px;
+    }
+    .hint kbd {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      padding: 2px 6px; border-radius: 8px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(255,255,255,.06);
+    }
+    textarea {
+      width: min(720px, 100%);
+      height: 120px;
+      background: rgba(255,255,255,.04);
+      color: #e8eef6;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 12px;
+    }
+    .modal {
+      position: fixed; inset: 0; display:none; z-index: 10;
+      background: rgba(0,0,0,.55);
+      align-items: center; justify-content: center;
+      padding: 16px;
+    }
+    .modal .card {
+      width: min(880px, 100%);
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(10,14,20,.95);
+      padding: 14px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.45);
+    }
+    .card h3 { margin: 0 0 8px 0; font-size: 16px; }
+    .card .row { margin-top: 10px; }
+    .spacer { flex:1; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <div class="group">
+      <button id="toolPaint" class="btn active">🧱 Pintar</button>
+      <button id="toolErase" class="btn">🩹 Borrar</button>
+      <button id="toolDoor"  class="btn">🚪 Puerta</button>
+      <button id="toolToken" class="btn">👾 Token</button>
+    </div>
+
+    <div class="group">
+      <label>Suelo:</label>
+      <select id="floorSelect"></select>
+      <div class="swatches" id="swatches"></div>
+    </div>
+
+    <div class="group">
+      <label>Grid</label>
+      <select id="gridSize">
+        <option value="40">40 px</option>
+        <option value="50">50 px</option>
+        <option value="60">60 px</option>
+        <option value="80">80 px</option>
+      </select>
+      <button id="toggleGrid" class="btn active"># visible</button>
+    </div>
+
+    <div class="group">
+      <label>Puerta:</label>
+      <select id="doorOri">
+        <option value="h">Horizontal</option>
+        <option value="v">Vertical</option>
+      </select>
+      <button id="doorToggleLock" class="btn">🔁 Alternar al poner</button>
+    </div>
+
+    <div class="spacer"></div>
+
+    <div class="group">
+      <button id="btnNew" class="btn">🗺️ Nuevo</button>
+      <button id="btnSave" class="btn">💾 Guardar JSON</button>
+      <button id="btnLoad" class="btn">📂 Cargar JSON</button>
+      <button id="btnPNG"  class="btn">🖼️ Exportar PNG</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div id="wrap">
+    <canvas id="c"></canvas>
+    <div class="hint">
+      <div><b>Gestos</b></div>
+      <div>• Pintar/Borrar: arrastra con el dedo</div>
+      <div>• Token: toca para crear, arrastra para mover</div>
+      <div>• Puerta: toca para poner/quitar</div>
+      <div style="margin-top:8px;opacity:.9">
+        En PC: <kbd>Shift</kbd> + rueda para zoom, arrastra con botón medio para pan.
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Modal JSON -->
+<div class="modal" id="modal">
+  <div class="card">
+    <h3>JSON del mapa</h3>
+    <textarea id="jsonArea" spellcheck="false"></textarea>
+    <div class="row">
+      <button id="closeModal" class="btn">Cerrar</button>
+      <div class="spacer"></div>
+      <button id="applyJson" class="btn">Aplicar JSON</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ---------- Config base ----------
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  // View transform (pan/zoom)
+  let view = { x: 0, y: 0, z: 1 }; // world->screen: (wx - x)*z
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  // Grid / map size
+  let cell = 50;
+  const mapW = 60; // celdas
+  const mapH = 40;
+
+  // Tools
+  const TOOLS = { PAINT:'paint', ERASE:'erase', DOOR:'door', TOKEN:'token' };
+  let tool = TOOLS.PAINT;
+
+  // Door options
+  let doorOri = 'h';
+  let doorToggleLock = false;
+
+  // Show grid
+  let showGrid = true;
+
+  // Floor types (texturas generadas)
+  const FLOOR = {
+    CAVERN: 'cavern_stone',
+    DIRT:   'dirt',
+    GRASS:  'grass',
+    TILE:   'flagstone'
+  };
+
+  const floorLabels = {
+    [FLOOR.CAVERN]: 'Piedra (caverna)',
+    [FLOOR.DIRT]:   'Tierra',
+    [FLOOR.GRASS]:  'Hierba',
+    [FLOOR.TILE]:   'Losas (mazmorra)'
+  };
+
+  let selectedFloor = FLOOR.TILE;
+
+  // Map data
+  const make2D = (w,h,valFn) => Array.from({length:h}, (_,y) => Array.from({length:w}, (_,x) => valFn(x,y)));
+  let tiles = make2D(mapW, mapH, () => ({ floor: null, door: null })); // floor: string|null, door: {ori:'h'|'v'}|null
+  let tokens = []; // {id, x,y (cell), label, kind}
+
+  // ---------- UI wiring ----------
+  const setActiveToolBtn = () => {
+    const m = {
+      toolPaint: tool === TOOLS.PAINT,
+      toolErase: tool === TOOLS.ERASE,
+      toolDoor:  tool === TOOLS.DOOR,
+      toolToken: tool === TOOLS.TOKEN
+    };
+    for (const id in m) document.getElementById(id).classList.toggle('active', m[id]);
+  };
+
+  document.getElementById('toolPaint').onclick = () => { tool = TOOLS.PAINT; setActiveToolBtn(); };
+  document.getElementById('toolErase').onclick = () => { tool = TOOLS.ERASE; setActiveToolBtn(); };
+  document.getElementById('toolDoor').onclick  = () => { tool = TOOLS.DOOR;  setActiveToolBtn(); };
+  document.getElementById('toolToken').onclick = () => { tool = TOOLS.TOKEN; setActiveToolBtn(); };
+
+  const floorSelect = document.getElementById('floorSelect');
+  for (const k of Object.values(FLOOR)) {
+    const opt = document.createElement('option');
+    opt.value = k; opt.textContent = floorLabels[k];
+    floorSelect.appendChild(opt);
+  }
+  floorSelect.value = selectedFloor;
+  floorSelect.onchange = () => { selectedFloor = floorSelect.value; };
+
+  const gridSizeSel = document.getElementById('gridSize');
+  gridSizeSel.value = String(cell);
+  gridSizeSel.onchange = () => { cell = parseInt(gridSizeSel.value, 10); fitToScreen(); };
+
+  const toggleGridBtn = document.getElementById('toggleGrid');
+  toggleGridBtn.onclick = () => { showGrid = !showGrid; toggleGridBtn.classList.toggle('active', showGrid); };
+
+  const doorOriSel = document.getElementById('doorOri');
+  doorOriSel.value = doorOri;
+  doorOriSel.onchange = () => { doorOri = doorOriSel.value; };
+
+  const doorToggleBtn = document.getElementById('doorToggleLock');
+  doorToggleBtn.onclick = () => { doorToggleLock = !doorToggleLock; doorToggleBtn.classList.toggle('active', doorToggleLock); };
+
+  // Modal JSON
+  const modal = document.getElementById('modal');
+  const jsonArea = document.getElementById('jsonArea');
+  document.getElementById('closeModal').onclick = () => modal.style.display = 'none';
+  document.getElementById('applyJson').onclick = () => {
+    try {
+      const obj = JSON.parse(jsonArea.value);
+      loadState(obj);
+      modal.style.display = 'none';
+    } catch (e) {
+      alert('JSON inválido: ' + e.message);
+    }
+  };
+
+  // New / Save / Load / PNG
+  document.getElementById('btnNew').onclick = () => {
+    tiles = make2D(mapW, mapH, () => ({ floor: null, door: null }));
+    tokens = [];
+  };
+
+  document.getElementById('btnSave').onclick = async () => {
+    const state = saveState();
+    const text = JSON.stringify(state, null, 2);
+    // iPad-friendly: abrir modal con JSON para copiar, y además intentar descarga
+    jsonArea.value = text;
+    modal.style.display = 'flex';
+
+    try {
+      const blob = new Blob([text], {type:'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'battlemap.json';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch {}
+  };
+
+  document.getElementById('btnLoad').onclick = async () => {
+    // picker simple
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'application/json';
+    inp.onchange = async () => {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      const text = await f.text();
+      try {
+        loadState(JSON.parse(text));
+      } catch (e) {
+        alert('No se pudo cargar: ' + e.message);
+      }
+    };
+    inp.click();
+  };
+
+  document.getElementById('btnPNG').onclick = () => {
+    const dataURL = canvas.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = dataURL;
+    a.download = 'battlemap.png';
+    a.click();
+  };
+
+  // ---------- Texturas procedural ----------
+  function makeTex(size, paintFn) {
+    const t = document.createElement('canvas');
+    t.width = t.height = size;
+    const g = t.getContext('2d');
+    paintFn(g, size);
+    return t;
+  }
+
+  function rnd(seed) {
+    // PRNG simple determinista (LCG) para que la textura no cambie cada frame
+    let s = seed >>> 0;
+    return () => (s = (1664525 * s + 1013904223) >>> 0) / 4294967296;
+  }
+
+  function noiseLayer(g, size, r, alpha=0.12, block=2) {
+    const img = g.createImageData(size, size);
+    for (let y=0; y<size; y++) for (let x=0; x<size; x++) {
+      const v = Math.floor(r()*255);
+      const i = (y*size + x)*4;
+      img.data[i+0] = v;
+      img.data[i+1] = v;
+      img.data[i+2] = v;
+      img.data[i+3] = Math.floor(alpha*255);
+    }
+    // "pixelado" suave: dibujamos en un buffer pequeño y escalamos
+    const small = document.createElement('canvas');
+    small.width = small.height = Math.max(4, Math.floor(size / (block*2)));
+    const sg = small.getContext('2d');
+    sg.putImageData(img, 0, 0);
+    g.save();
+    g.imageSmoothingEnabled = true;
+    g.globalAlpha = 1;
+	g.drawImage(small, 0, 0, size, size);
+    g.restore();
+  }
+
+  const textures = {};
+  const patterns = {};
+
+  function buildTextures() {
+    // Caverna: piedra irregular
+    textures[FLOOR.CAVERN] = makeTex(128, (g, s) => {
+      g.fillStyle = '#2a2f36';
+      g.fillRect(0,0,s,s);
+
+      const r = rnd(12345);
+      // manchas
+      for (let i=0;i<140;i++){
+        const x=r()*s, y=r()*s, rad=6+r()*24;
+        g.beginPath();
+        g.fillStyle = `rgba(0,0,0,${0.08 + r()*0.12})`;
+        g.arc(x,y,rad,0,Math.PI*2);
+        g.fill();
+      }
+      // vetas claras
+      for (let i=0;i<60;i++){
+        const x=r()*s, y=r()*s, w=10+r()*40, h=2+r()*10;
+        g.save();
+        g.translate(x,y);
+        g.rotate((r()*2-1)*1.2);
+        g.fillStyle = `rgba(255,255,255,${0.02 + r()*0.05})`;
+        g.fillRect(-w/2,-h/2,w,h);
+        g.restore();
+      }
+      noiseLayer(g, s, r, 0.12, 3);
+    });
+
+    // Tierra
+    textures[FLOOR.DIRT] = makeTex(128, (g, s) => {
+      g.fillStyle = '#3a2c1f';
+      g.fillRect(0,0,s,s);
+
+      const r = rnd(22222);
+      for (let i=0;i<180;i++){
+        const x=r()*s, y=r()*s, rad=3+r()*10;
+        g.beginPath();
+        g.fillStyle = `rgba(0,0,0,${0.06 + r()*0.10})`;
+        g.arc(x,y,rad,0,Math.PI*2);
+        g.fill();
+      }
+      for (let i=0;i<90;i++){
+        const x=r()*s, y=r()*s, rad=2+r()*6;
+        g.beginPath();
+        g.fillStyle = `rgba(255,255,255,${0.01 + r()*0.03})`;
+        g.arc(x,y,rad,0,Math.PI*2);
+        g.fill();
+      }
+      noiseLayer(g, s, r, 0.10, 3);
+    });
+
+    // Hierba
+    textures[FLOOR.GRASS] = makeTex(128, (g, s) => {
+      g.fillStyle = '#1f3a22';
+      g.fillRect(0,0,s,s);
+      const r = rnd(33333);
+
+      // briznas
+      for (let i=0;i<240;i++){
+        const x=r()*s, y=r()*s;
+        const len=6+r()*18;
+        const ang=(r()*2-1)*0.7 - Math.PI/2;
+        g.strokeStyle = `rgba(0,0,0,${0.04 + r()*0.08})`;
+        g.lineWidth = 1;
+        g.beginPath();
+        g.moveTo(x,y);
+        g.lineTo(x + Math.cos(ang)*len, y + Math.sin(ang)*len);
+        g.stroke();
+
+        g.strokeStyle = `rgba(255,255,255,${0.01 + r()*0.03})`;
+        g.beginPath();
+        g.moveTo(x,y);
+        g.lineTo(x + Math.cos(ang)*len*0.6, y + Math.sin(ang)*len*0.6);
+        g.stroke();
+      }
+      // parches
+      for (let i=0;i<60;i++){
+        const x=r()*s, y=r()*s, rad=10+r()*24;
+        g.beginPath();
+        g.fillStyle = `rgba(0,0,0,${0.03 + r()*0.06})`;
+        g.arc(x,y,rad,0,Math.PI*2);
+        g.fill();
+      }
+      noiseLayer(g, s, r, 0.08, 3);
+    });
+
+    // Losas (flagstone)
+    textures[FLOOR.TILE] = makeTex(128, (g, s) => {
+      g.fillStyle = '#2a3138';
+      g.fillRect(0,0,s,s);
+
+      const r = rnd(44444);
+
+      // losas con juntas
+      const step = 32;
+      g.lineWidth = 2;
+      g.strokeStyle = 'rgba(0,0,0,0.35)';
+      for (let y=0; y<=s; y+=step){
+        for (let x=0; x<=s; x+=step){
+          const ox = (r()*6-3), oy = (r()*6-3);
+          g.strokeRect(x+ox, y+oy, step, step);
+          // variación interior
+          g.fillStyle = `rgba(255,255,255,${0.01 + r()*0.04})`;
+          g.fillRect(x+ox+3, y+oy+3, step-6, step-6);
+        }
+      }
+      // grietas
+      g.strokeStyle = 'rgba(0,0,0,0.25)';
+      for (let i=0;i<40;i++){
+        const x=r()*s, y=r()*s;
+        g.beginPath();
+        g.moveTo(x,y);
+        g.lineTo(x+(r()*2-1)*40, y+(r()*2-1)*40);
+        g.stroke();
+      }
+      noiseLayer(g, s, r, 0.10, 3);
+    });
+
+    // Patterns
+    for (const k of Object.values(FLOOR)) {
+      patterns[k] = ctx.createPattern(textures[k], 'repeat');
+    }
+
+    // Swatches
+    const sw = document.getElementById('swatches');
+    sw.innerHTML = '';
+    for (const k of Object.values(FLOOR)) {
+      const box = document.createElement('div');
+      box.className = 'swatch';
+      const sc = document.createElement('canvas');
+      sc.width = sc.height = 64;
+      const sg = sc.getContext('2d');
+      sg.drawImage(textures[k], 0, 0, 64, 64);
+      box.title = floorLabels[k];
+      box.appendChild(sc);
+      box.onclick = () => { selectedFloor = k; floorSelect.value = k; };
+      sw.appendChild(box);
+    }
+  }
+
+  buildTextures();
+
+  // ---------- Helpers coordenadas ----------
+  function resize() {
+    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.floor(rect.width * dpr);
+    canvas.height = Math.floor(rect.height * dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+
+  function fitToScreen() {
+    // centra el mapa en pantalla
+    const rect = canvas.getBoundingClientRect();
+    const mapPxW = mapW * cell;
+    const mapPxH = mapH * cell;
+    const z = Math.min(rect.width / mapPxW, rect.height / mapPxH);
+    view.z = clamp(z, 0.35, 2.5);
+    view.x = - (rect.width/view.z - mapPxW)/2;
+    view.y = - (rect.height/view.z - mapPxH)/2;
+  }
+
+  function screenToWorld(sx, sy) {
+    // sx,sy en CSS pixels dentro del canvas
+    const wx = sx / view.z + view.x;
+    const wy = sy / view.z + view.y;
+    return { wx, wy };
+  }
+
+  function worldToCell(wx, wy) {
+    const cx = Math.floor(wx / cell);
+    const cy = Math.floor(wy / cell);
+    return { cx, cy };
+  }
+
+  function inBounds(cx, cy) {
+    return cx >= 0 && cy >= 0 && cx < mapW && cy < mapH;
+  }
+
+  function cellCenter(cx, cy) {
+    return { x: cx*cell + cell/2, y: cy*cell + cell/2 };
+  }
+
+  // ---------- Render ----------
+  function draw() {
+    // clear
+    ctx.fillStyle = '#070a0e';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    const rect = canvas.getBoundingClientRect();
+    // apply view transform (world -> screen)
+    ctx.save();
+    ctx.scale(view.z, view.z);
+    ctx.translate(-view.x, -view.y);
+
+    // Tiles
+    for (let y=0; y<mapH; y++) {
+      for (let x=0; x<mapW; x++) {
+        const t = tiles[y][x];
+        const px = x*cell, py = y*cell;
+        if (t.floor) {
+          ctx.fillStyle = patterns[t.floor];
+          ctx.fillRect(px, py, cell, cell);
+        } else {
+          // vacío oscuro
+          ctx.fillStyle = 'rgba(255,255,255,0.015)';
+          ctx.fillRect(px, py, cell, cell);
+        }
+      }
+    }
+
+    // Grid
+    if (showGrid) {
+      ctx.lineWidth = 1 / view.z;
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.beginPath();
+      for (let x=0; x<=mapW; x++) {
+        ctx.moveTo(x*cell, 0);
+        ctx.lineTo(x*cell, mapH*cell);
+      }
+      for (let y=0; y<=mapH; y++) {
+        ctx.moveTo(0, y*cell);
+        ctx.lineTo(mapW*cell, y*cell);
+      }
+      ctx.stroke();
+    }
+
+    // Doors
+    for (let y=0; y<mapH; y++) {
+      for (let x=0; x<mapW; x++) {
+        const d = tiles[y][x].door;
+        if (!d) continue;
+        const px = x*cell, py = y*cell;
+        drawDoor(px, py, d.ori);
+      }
+    }
+
+    // Tokens
+    for (const tok of tokens) drawToken(tok);
+
+    // Border
+    ctx.lineWidth = 2 / view.z;
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.strokeRect(0,0,mapW*cell,mapH*cell);
+
+    ctx.restore();
+
+    requestAnimationFrame(draw);
+  }
+
+  function drawDoor(px, py, ori) {
+    // puerta simple: barra + bisagras
+    ctx.save();
+    ctx.translate(px + cell/2, py + cell/2);
+
+    const w = cell * 0.70;
+    const h = cell * 0.16;
+    if (ori === 'v') ctx.rotate(Math.PI/2);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    roundRect(-w/2, -h/2, w, h, h/2);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ctx.lineWidth = 2 / view.z;
+    roundRect(-w/2, -h/2, w, h, h/2);
+    ctx.stroke();
+
+    // pomo
+    ctx.fillStyle = 'rgba(255,255,255,0.30)';
+    ctx.beginPath();
+    ctx.arc(w/2 - h*0.65, 0, h*0.28, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawToken(tok) {
+    const { x, y } = cellCenter(tok.x, tok.y);
+    const r = cell * 0.34;
+
+    ctx.save();
+    ctx.translate(x, y);
+
+    // sombra
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(0, r*0.85, r*0.95, r*0.35, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // cuerpo
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(120,200,255,0.55)';
+    ctx.lineWidth = 2 / view.z;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI*2);
+    ctx.stroke();
+
+    // icono
+    ctx.font = `${Math.floor(r*1.35)}px system-ui, Apple Color Emoji, Segoe UI Emoji`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.fillText(tok.kind || '👾', 0, -1);
+
+    // label
+    if (tok.label) {
+      ctx.font = `${Math.max(10, Math.floor(r*0.55))}px system-ui`;
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillText(tok.label, 0, r + 12);
+    }
+
+    ctx.restore();
+  }
+
+  function roundRect(x,y,w,h,r) {
+    const rr = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x+rr,y);
+    ctx.arcTo(x+w,y, x+w,y+h, rr);
+    ctx.arcTo(x+w,y+h, x,y+h, rr);
+    ctx.arcTo(x,y+h, x,y, rr);
+    ctx.arcTo(x,y, x+w,y, rr);
+    ctx.closePath();
+  }
+
+  // ---------- Interacción ----------
+  let pointer = {
+    down: false,
+    id: null,
+    mode: null, // 'paint' | 'pan' | 'dragToken'
+    last: { sx:0, sy:0 },
+    tokenId: null
+  };
+
+  function getCanvasPos(e) {
+    const r = canvas.getBoundingClientRect();
+    return { sx: e.clientX - r.left, sy: e.clientY - r.top };
+  }
+
+  function tokenAtCell(cx, cy) {
+    // token si coincide celda
+    return tokens.find(t => t.x === cx && t.y === cy) || null;
+  }
+
+  function tokenHit(wx, wy) {
+    // hit test por distancia
+    for (let i=tokens.length-1; i>=0; i--) {
+      const t = tokens[i];
+      const c = cellCenter(t.x, t.y);
+      const dx = wx - c.x, dy = wy - c.y;
+      const r = cell * 0.36;
+      if (dx*dx + dy*dy <= r*r) return t;
+    }
+    return null;
+  }
+
+  function applyToolAt(cx, cy) {
+    if (!inBounds(cx,cy)) return;
+    const t = tiles[cy][cx];
+
+    if (tool === TOOLS.PAINT) {
+      t.floor = selectedFloor;
+      return;
+    }
+    if (tool === TOOLS.ERASE) {
+      t.floor = null;
+      t.door = null;
+      // si hay token en esa celda, lo quitamos
+      tokens = tokens.filter(k => !(k.x === cx && k.y === cy));
+      return;
+    }
+    if (tool === TOOLS.DOOR) {
+      if (t.door) {
+        t.door = null;
+      } else {
+        t.door = { ori: doorOri };
+        if (doorToggleLock) {
+          doorOri = (doorOri === 'h') ? 'v' : 'h';
+          doorOriSel.value = doorOri;
+        }
+      }
+      return;
+    }
+    if (tool === TOOLS.TOKEN) {
+      const existing = tokenAtCell(cx, cy);
+      if (existing) {
+        // tocar token existente: no lo duplicamos
+        return;
+      }
+      const label = prompt('Nombre del monstruo (opcional):', '') ?? '';
+      const kind  = prompt('Icono/emoji (ej: 👾 🐀 🧟 🐉):', '👾') ?? '👾';
+      tokens.push({ id: cryptoId(), x: cx, y: cy, label: label.trim(), kind: (kind.trim() || '👾') });
+      return;
+    }
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    pointer.down = true;
+    pointer.id = e.pointerId;
+    pointer.last = getCanvasPos(e);
+
+    const { wx, wy } = screenToWorld(pointer.last.sx, pointer.last.sy);
+
+    // PC: pan con botón medio o Space (no implementamos space aquí)
+    // iPad: pan con 2 dedos suele ser scroll. Nos quedamos simple: solo pintar/arrastrar token.
+    const hitTok = tokenHit(wx, wy);
+
+    if (tool === TOOLS.TOKEN && hitTok) {
+      pointer.mode = 'dragToken';
+      pointer.tokenId = hitTok.id;
+      return;
+    }
+
+    // pintar/puerta/borrar/token (crear)
+    pointer.mode = 'paint';
+    const { cx, cy } = worldToCell(wx, wy);
+    applyToolAt(cx, cy);
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!pointer.down || e.pointerId !== pointer.id) return;
+    const pos = getCanvasPos(e);
+    const { wx, wy } = screenToWorld(pos.sx, pos.sy);
+
+    if (pointer.mode === 'dragToken') {
+      const { cx, cy } = worldToCell(wx, wy);
+      if (!inBounds(cx,cy)) return;
+      const t = tokens.find(t => t.id === pointer.tokenId);
+      if (!t) return;
+      // evita colocar token encima de otro: lo permitimos, pero si quieres bloquear, puedes cambiar aquí
+      t.x = cx; t.y = cy;
+      return;
+    }
+
+    // drag paint: solo paint/erase, no spamear puertas/tokens en drag
+    if (tool === TOOLS.PAINT || tool === TOOLS.ERASE) {
+      const { cx, cy } = worldToCell(wx, wy);
+      applyToolAt(cx, cy);
+    }
+  });
+
+  canvas.addEventListener('pointerup', (e) => {
+    if (e.pointerId !== pointer.id) return;
+    pointer.down = false;
+    pointer.id = null;
+    pointer.mode = null;
+    pointer.tokenId = null;
+  });
+
+  // Zoom / pan (PC)
+  canvas.addEventListener('wheel', (e) => {
+    // Shift+wheel para zoom en PC
+    if (!e.shiftKey) return;
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    const before = screenToWorld(sx, sy);
+
+    const dz = Math.exp(-e.deltaY * 0.0015);
+    view.z = clamp(view.z * dz, 0.35, 3.0);
+
+    const after = screenToWorld(sx, sy);
+    // Ajustar pan para mantener el punto bajo el cursor
+    view.x += (before.wx - after.wx);
+    view.y += (before.wy - after.wy);
+  }, { passive:false });
+
+  // ---------- Save/Load ----------
+  function saveState() {
+    return {
+      v: 1,
+      cell,
+      mapW, mapH,
+      tiles,
+      tokens
+    };
+  }
+
+  function loadState(obj) {
+    if (!obj || typeof obj !== 'object') throw new Error('obj inválido');
+    if (!obj.tiles || !Array.isArray(obj.tiles)) throw new Error('tiles no encontrado');
+    if (!obj.tokens || !Array.isArray(obj.tokens)) obj.tokens = [];
+    // restaurar
+    if (obj.cell) {
+      cell = obj.cell;
+      gridSizeSel.value = String(cell);
+    }
+    tiles = obj.tiles;
+    tokens = obj.tokens.map(t => ({ id: t.id || cryptoId(), x:t.x|0, y:t.y|0, label: t.label||'', kind: t.kind||'👾' }));
+    fitToScreen();
+  }
+
+  function cryptoId() {
+    // id corto
+    try { return crypto.randomUUID().slice(0,8); }
+    catch { return String(Math.random()).slice(2,10); }
+  }
+
+  // ---------- Init ----------
+  function onResize() {
+    resize();
+    fitToScreen();
+  }
+  window.addEventListener('resize', onResize);
+  onResize();
+  requestAnimationFrame(draw);
+
+})();
+</script>
+</body>
+</html>
